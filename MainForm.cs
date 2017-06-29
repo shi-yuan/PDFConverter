@@ -2,6 +2,7 @@
 using Aspose.Pdf.Devices;
 using DevExpress.Utils.Helpers;
 using DevExpress.XtraEditors;
+using DevExpress.XtraGrid.Views.Grid;
 using System;
 using System.Data;
 using System.IO;
@@ -28,7 +29,8 @@ namespace PDFConverter
             var Items = comboBoxEdit_operation.Properties.Items;
             Items.BeginUpdate();
             Items.AddRange(new object[]{
-                "PDF转图片"
+                "WORD转PDF",
+                "PDF转JPG"
             });
             Items.EndUpdate();
 
@@ -116,10 +118,33 @@ namespace PDFConverter
         /// <param name="e"></param>
         private void btn_add_Click(object sender, EventArgs e)
         {
+            var val = comboBoxEdit_operation.EditValue as string;
+            Action<string> ac;
+            string filter;
+            int maxDegreeOfParallelism;
+            if (val == "WORD转PDF")
+            {
+                ac = Word2Pdf;
+                filter = "WORD (*.doc; *.docx)|*.doc;*.docx";
+                maxDegreeOfParallelism = 1;
+            }
+            else if (val == "PDF转JPG")
+            {
+                ac = Pdf2Image;
+                filter = "PDF (*.pdf)|*.pdf";
+                maxDegreeOfParallelism = Environment.ProcessorCount;
+            }
+            else
+            {
+                XtraMessageBox.Show("请选择操作类型", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                comboBoxEdit_operation.Select();
+                return;
+            }
+
             string[] names = null;
             using (var dlg = new OpenFileDialog())
             {
-                dlg.Filter = "PDF (*.pdf)|*.pdf";
+                dlg.Filter = filter;
                 dlg.Multiselect = true;
                 if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
                 {
@@ -146,15 +171,16 @@ namespace PDFConverter
             // 开始转换
             Task.Run(() =>
             {
-                Parallel.ForEach(dt.AsEnumerable(), new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, item =>
+                Parallel.ForEach(dt.AsEnumerable(), new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism }, item =>
                 {
                     Invoke(new Action(() =>
                     {
                         item.SetField(dt.StatusColumn, "正在处理");
                     }));
+
                     try
                     {
-                        Pdf2Image(item.Name);
+                        ac(item.Name);
                     }
                     catch (Exception)
                     {
@@ -174,6 +200,71 @@ namespace PDFConverter
             });
         }
 
+        /// <summary>
+        /// 根据处理状态, 改变状态单元格背景色
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void gridView1_RowCellStyle(object sender, DevExpress.XtraGrid.Views.Grid.RowCellStyleEventArgs e)
+        {
+            var view = sender as GridView;
+            if (e.Column == gridColumn_status)
+            {
+                string status = view.GetRowCellDisplayText(e.RowHandle, gridColumn_status);
+                if (status == "正在处理")
+                {
+                    e.Appearance.BackColor = System.Drawing.Color.Yellow;
+                    e.Appearance.BackColor2 = System.Drawing.Color.LightGoldenrodYellow;
+                }
+                else if (status == "处理成功")
+                {
+                    e.Appearance.BackColor = System.Drawing.Color.GreenYellow;
+                    e.Appearance.BackColor2 = System.Drawing.Color.DarkSeaGreen;
+                }
+                else if (status == "处理失败")
+                {
+                    e.Appearance.BackColor = System.Drawing.Color.OrangeRed;
+                    e.Appearance.BackColor2 = System.Drawing.Color.PaleVioletRed;
+                }
+            }
+        }
+
+        #region PDF相关操作
+
+        /// <summary>
+        /// WORD转PDF
+        /// </summary>
+        /// <param name="filePath"></param>
+        void Word2Pdf(string filePath)
+        {
+            if (new FileInfo(filePath).Attributes.HasFlag(FileAttributes.Hidden))
+            {
+                return;
+            }
+
+            var appWord = new Microsoft.Office.Interop.Word.Application();
+            try
+            {
+                var wordDocument = appWord.Documents.Open(filePath);
+                try
+                {
+                    wordDocument.ExportAsFixedFormat(Path.Combine(breadCrumbEdit_output.Path, Path.GetFileNameWithoutExtension(filePath) + ".pdf"), Microsoft.Office.Interop.Word.WdExportFormat.wdExportFormatPDF);
+                }
+                finally
+                {
+                    wordDocument.Close();
+                }
+            }
+            finally
+            {
+                appWord.Quit();
+            }
+        }
+
+        /// <summary>
+        /// PDF转JPG
+        /// </summary>
+        /// <param name="filePath"></param>
         void Pdf2Image(string filePath)
         {
             var fileName = Path.GetFileNameWithoutExtension(filePath);
@@ -194,5 +285,7 @@ namespace PDFConverter
                 }
             }
         }
+
+        #endregion
     }
 }
